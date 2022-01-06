@@ -1,0 +1,356 @@
+
+<------IPTABLES------->
+<-------start-------->
+#install firewalld if not present
+dnf install firewalld
+
+#to start firewalld
+dnf enable firewalld
+
+#to check if it is started
+dnf status firewalld
+
+#to list all the rules 
+iptables -L
+
+#backup old rules
+iptables-save > filename
+
+#restore old rules
+iptables-restore filename
+
+#delete a rule
+iptables -D OUTPUT -j ACCEPT
+
+
+#set default policy to drop on all chains in filter table and then only u type rules
+iptables -P INPUT DROP 
+
+#questions
+
+#block all unrelated incoming traffic from internet , but allow all outgoing traffic
+iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+#block all outgoing traffic except browser traffic 
+iptables -A OUTPUT -p tcp -m tcp --dport 80 -j ACCEPT
+iptables -A OUTPUT -p tcp -m tcp --dport 443 -j ACCEPT
+iptables -A OUTPUT -p udp -m udp --dport 53 -j ACCEPT
+
+#allow pings to hosts on Internet
+iptables -A OUTPUT -p icmp -m icmp --icmp-type echo-request -j ACCEPT
+
+#allow traffic from internet to port number 8080 , only from host with ip address 202.41.117.3 and netmask 255.255.255.192
+iptables -A INPUT -p tcp -s 202.41.117.3/26 --dport 8080 -j ACCEPT
+<------end----->
+
+
+<----squid------->
+<-------start-------->
+
+#go to ur root first 
+sudo bash
+#enter ur password
+
+#install squid if not installed
+dnf install squid
+
+#go to squid folder
+cd /etc/squid/
+
+#check if squid is on or not
+systemctl status squid
+
+#if it is inactive, make it active
+systemctl start squid
+
+#create a backup of squid.conf 
+cp squid.conf squid.backup.conf
+
+#now inside browser change the network settings to manual proxy
+HTTP Port : 127.0.0.1    3128
+#also use this proxy for HTTPS
+
+#questions
+
+#create three users i.e Alice, Bob and Darth
+htpasswd -c pfile Alice
+
+#it will ask for password 
+
+#similarly in the same file(pfile) we have to create two more users, 
+htpasswd pfile Bob
+
+htpasswd pfile Darth
+
+#now we need to typee this line at the top of squid.conf
+auth_param basic program /usr/lib64/squid/basic_ncsa_auth /etc/squid/pfile
+
+#question
+<----1----->
+#Alice and Bob should be able to access seperate set of websites at all time . No access to Darth
+
+#my assumption
+(#let's say alice should be allowed www.amazon.com and www.flipkart.com)
+
+(#let's say bob should be allowed www.twitter.com and www.youtube.com)
+
+acl wsites1 dstdomain www.amazon.com www.flipkart.com
+acl wsites2 dstdomain www.twitter.com www.youtube.com
+acl aliceusr proxy_auth alice
+acl bobusr proxy_auth bob
+acl darthusr proxy_auth darth
+
+http_access allow wsites1 aliceusr
+http_access deny !wsites1 aliceusr
+
+http_access allow wsites2 bobusr
+http_access deny !wsites2 bobusr
+
+http_access deny all  
+
+<-----2----->
+#alice and bob should be able to access all websites only between 10:00am to 5:00pm . Darth should have unrestricted access
+acl aliceusr proxy_auth alice
+acl bobusr proxy_auth bob
+acl darthusr proxy_auth darth
+
+acl blocktime time 10:00-17:00
+
+http_access allow aliceusr blocktime
+http_access deny aliceusr blocktime
+http_access allow bobusr blocktime
+http_access deny bobusr blocktime
+
+http_access allow darthusr
+
+
+<----3---->
+#alice should be able to access all websites. Bob only certain websites between 10:00 to 5:00 pm.Darth should have access only to university website
+acl aliceusr proxy_auth alice
+acl bobusr proxy_auth bob
+acl darthusr proxy_auth darth
+acl wsites2 dstdomain www.twitter.com www.youtube.com
+acl wsite1 dstdomain www.unigoa.ac.in
+acl blocktime time 10:00-17:00
+
+http_access allow aliceusr
+http_access allow bobusr wsites2 blocktime
+http_access deny bobusr !wsites2 blocktime
+http_access allow darthusr wsite1
+http_access deny darthusr
+
+<------end------->
+
+
+
+
+<----openssl encryption and decyrtion------->
+<------start-------->
+#to create a secret key of 128 bits
+openssl rand -out symm.key 16
+
+#to convert plain text into cipher text 
+openssl enc -aes-128-cbc -in plain.txt -out cipher.txt -kfile symm.key -e
+
+#to create a priavte key using rsa 
+openssl genrsa -out alicepriv.key -aes256 2048
+
+#to extract private key from public key
+openssl rsa -in alicepriv.key -out alicepub.key -pubout
+
+#to display the ouput of public key
+openssl rsa -in alicepub.key -pubin
+
+#to encrypt that secret key using public key bob
+openssl rsautl -in symm.key -out symm.enc.key -inkey bobpub.key -pubin -encrypt
+
+#to decrypt that secret key using private key of bob
+openssl rsautl -in symm.enc.key -out symm.dec.key -inkey bobpriv.key -decrypt
+
+#to decrypt the cipher textusing this decrypted secret key
+openssl enc -in cipher.txt -out cipher.dec.txt -d -aes-128-cbc -kfile symm.dec.key
+
+<---Intgerity check ----->
+(use hash)
+#to create hash of plain.txt 
+openssl dgst -sha256 -out hash.txt plain.txt
+
+<---Authentication check------>
+(use mac)
+#to create mac of plain.txt
+openssl dgst -sha256 -out hash.mac.txt -hmac key1 plain.txt
+
+<---Digital Signature---->
+(use private key of user to sign the hash)
+#to create a digital signature of plain.txt
+openssl dgst -sha256 -out hash.sign -sign alicepriv.key plain.txt
+
+#to verfiy the signature
+openssl dgst -sha256 -signature hash.sign -verify alicepub.key plain.txt
+<-----end---->
+
+
+<-------CA using openssl------->
+<-----start------>
+mkdir ca
+#inside ca
+mkdir certs crl newcerts private
+chmod 700 private
+touch index.txt
+echo 1000 > serial
+
+#copy the openssl.cnf file in the ca folder
+change the dir path: /home/user_name/ca
+
+#generate the private key for ur certificate 
+openssl genrsa -aes256 -out private/GBSRootCA.key 4096
+
+#change the permission of the private to read only
+chmod 400 private/GBSRootCA.key 
+
+#now we will create the x509 certificate
+openssl req -config openssl.cnf -key private/GBSRootCA.key -new -x509 -days 7000 -sha256 -extensions v3_Ca -out GBSRootCA.cert
+#add the information
+IN
+Goa
+Taleigao
+[press enter]
+Goa Business School
+GBS Root Certifying Authority
+[press enter]
+
+#change the permission of this certificate and make it read only for everyone.
+chmod 444 GBSRootCA.cert
+
+#move the certificate to certs folder
+mv GBSRootCA.cert certs/
+
+#to check the contents of generated certificate.
+openssl x509 -noout -text -in certs/GBSRootCA.cert
+
+#now create intermediate folder inside ca folder only
+mkdir intermediate
+
+#go inside intermediate folder
+cd intermediate
+
+#inside intermediate , create folders
+mkdir cert crl csr newcerts private
+
+#change the permission for private
+chmod 700 private
+
+#create index and serial and crlnumber 
+touch index.txt 
+echo 1000 > serial
+echo 1000 > crlnumber
+
+#copy the openssl.cnf file from ca to intermediate 
+#first go to ca 
+cd ca
+cp openssl.cnf intermediate/
+#then come to intermediate folder again
+cd intermediate 
+#now make changes the openssl.cnf file which you copied in intermediate folder
+#change the dir
+dir = /home/user_name/ca/intermediate
+#change the certs,certificate and policy
+certs = $dir/cert
+certificate = $dir/cert/GBSCSTCA.cert
+policy = policy_loose
+
+#come back to ca folder if u are in intermediate folder
+cd ..
+#create a private key of 4096 bit for intermediate now
+openssl genrsa -aes256 -out intermediate/private/GBSCSTCA.key 4096
+
+#change the private key permission
+chmod 400 intermediate/private/GBSCSTCA.key
+
+
+#create intermediate certificate
+openssl req -config intermediate/openssl.cnf -new -sha256 -key intermediate/private/GBSCSTCA.key -out intermediate/csr/GBSCSTCA.csr
+#enter details now
+IN
+Goa
+Taleigao
+Goa University
+Goa Business School
+GBS CST Certifying Authority
+[press enter]
+
+#forward the csr to root ca to sign and create the intermediate ca certificate
+openssl ca -config openssl.cnf -extensions v3_intermediate_ca -days 3650 -notext -md sha256 -in intermediate/csr/GBSCSTCA.csr -out intermediate/cert/GBSCSTCA.cert 
+
+#check index file it will have a entry for certificate and serial will have serial number
+cat index.txt
+cat serial
+
+#to look at the contents of digital certificate 
+#it will also tell u that it is not a self signed signature cause issuer and subject is different
+openssl x509 -noout -text -in intermediate/cert/GBSCSTCA.cert
+
+
+#to verify the digital certificate
+openssl verify -CAfile certs/GBSRootCA.cert intermediate/cert/GBSCSTCA.cert
+
+#to chain the certificates together
+cat intermediate/cert/GBSCSTCA.cert certs/GBSRootCA.cert > intermediate/cert/CA-Chain.cert
+
+
+#issuing certificate to end user
+#this is should be done in ca folder only
+#generating private key for our webserver (www.gbs.unigoa.ac.in)
+openssl genrsa -aes256 -out intermediate/private/www.gbs.unigoa.ac.in.key 2048 
+
+#generating csr for webserver
+openssl req -config intermediate/openssl.cnf -key intermediate/private/www.gbs.unigoa.ac.in.key -new -sha256 -out intermediate/csr/www.gbs.unigoa.ac.in.csr
+#enter information
+IN
+Goa
+Taleigao
+Goa University
+Goa Business School
+www.gbs.unigoa.ac.in
+[press enter]
+
+#generating the certificate
+openssl ca -config intermediate/openssl.cnf -extensions server_cert -days 375 -notext -md sha256 -in intermediate/csr/www.gbs.unigoa.ac.in.csr -out intermediate/cert/www.gbs.unigoa.ac.in.cert 
+
+#to check the contents of certificate
+openssl x509 -text -noout -in intermediate/cert/www.gbs.unigoa.ac.in.cert
+
+
+
+#to verify the certificate
+openssl verify -CAfile intermediate/cert/CA-Chain.cert intermediate/cert/www.gbs.unigoa.ac.in.cert
+
+
+#creating private key for user Alice
+openssl genrsa -aes256 -out intermediate/private/alice.key 2048
+
+#create the csr for that user
+openssl req -config inintermediate/openssl.cnf -key intermediate/private/alice.key -new -sha256 -out intermediate/csr/alice.csr
+#enter the details
+BR
+England
+London
+ABC Corps
+Human Resource Department
+Alice Brown
+alice.brown@abccorps.com
+
+#generate the user certificate
+openssl ca -config intermediate/openssl.cnf -extensions usr_cert -days 375 -notext -md sha256 -in intermediate/csr/alice.csr -out intermediate/cert/alice.cert
+
+#revoking certificate
+openssl ca -config intermediate/openssl.cnf -gencrl -out intermediate/crl/GBSCSTCA.crl
+
+#to look at contents of the crl
+openssl crl -text -noout -in intermediate/crl/GBSCSTCA.crl
+
+#to revoke a certificate 
+openssl ca -config intermediate/openssl.cnf -revoke intermediate/cert/alice.cert
+
+<--------end------>
+
